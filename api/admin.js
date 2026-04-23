@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless';
+import crypto from 'node:crypto';
 
 let _sql;
 function getSql() {
@@ -17,6 +18,70 @@ function getSql() {
 }
 
 const ET = 'America/New_York';
+const COOKIE_NAME = 'brickday_admin';
+const COOKIE_PAYLOAD = 'admin-v1';
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+
+function computeToken(password) {
+  return crypto
+    .createHmac('sha256', password)
+    .update(COOKIE_PAYLOAD)
+    .digest('hex');
+}
+
+function parseCookies(header) {
+  if (!header) return {};
+  const out = {};
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function isAuthenticated(req, expected) {
+  if (!expected) return false;
+  const cookies = parseCookies(req.headers && req.headers.cookie);
+  const token = cookies[COOKIE_NAME];
+  if (!token) return false;
+  const valid = computeToken(expected);
+  if (token.length !== valid.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(valid));
+  } catch {
+    return false;
+  }
+}
+
+function safePasswordMatch(provided, expected) {
+  if (!provided || !expected) return false;
+  const a = crypto.createHash('sha256').update(String(provided)).digest();
+  const b = crypto.createHash('sha256').update(String(expected)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+function setAuthCookie(res, password) {
+  const token = computeToken(password);
+  res.setHeader(
+    'Set-Cookie',
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`
+  );
+}
+
+function clearAuthCookie(res) {
+  res.setHeader(
+    'Set-Cookie',
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+  );
+}
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -28,9 +93,7 @@ function escapeHtml(str) {
     .replaceAll("'", '&#39;');
 }
 
-function escapeAttr(str) {
-  return escapeHtml(str);
-}
+const escapeAttr = escapeHtml;
 
 function fmtDate(d) {
   return new Date(d).toLocaleString('en-US', {
@@ -59,9 +122,10 @@ const STYLES = `
   :root { --blue:#0055BF; --blue-dark:#003D8A; --green:#237841; --red:#C91A09; --red-dark:#8F1206; --bg:#F5F3EE; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; background: var(--bg); color:#1a1a1a; }
-  header { background: var(--blue); color:#fff; padding: 18px 20px; }
+  header { background: var(--blue); color:#fff; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   header h1 { margin:0; font-size:20px; }
   header .sub { opacity:.85; font-size:13px; margin-top:2px; }
+  header .head-left { min-width: 0; }
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
   .totals { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   .stat { background:#fff; border-radius:10px; padding:10px 14px; box-shadow:0 1px 0 rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.06); }
@@ -85,41 +149,82 @@ const STYLES = `
   .tag-gray { background:#eee; color:#444; }
   .attendee { padding: 1px 0; }
   .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
-  .btn { display:inline-block; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; border: 1px solid transparent; cursor: pointer; text-decoration: none; background: #fff; color: #333; }
+  .btn { display:inline-block; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; border: 1px solid transparent; cursor: pointer; text-decoration: none; background: #fff; color: #333; font-family: inherit; }
   .btn-edit { border-color: var(--blue); color: var(--blue); background:#fff; }
   .btn-edit:hover { background: #eef3fb; }
   .btn-delete { border-color: var(--red); color: var(--red); background:#fff; }
   .btn-delete:hover { background: #fbeceb; }
-  .btn-primary { background: var(--blue); color:#fff; border-color: var(--blue); padding: 10px 16px; font-size: 14px; }
+  .btn-primary { background: var(--blue); color:#fff; border-color: var(--blue); padding: 12px 18px; font-size: 15px; width: 100%; }
   .btn-primary:hover { background: var(--blue-dark); border-color: var(--blue-dark); }
   .btn-danger { background: var(--red); color:#fff; border-color: var(--red); padding: 10px 16px; font-size: 14px; }
   .btn-danger:hover { background: var(--red-dark); border-color: var(--red-dark); }
   .btn-link { background: transparent; border: none; color: var(--blue); font-weight: 600; padding: 10px 4px; font-size: 14px; }
+  .btn-ghost { background: rgba(255,255,255,.14); color:#fff; border: 1px solid rgba(255,255,255,.35); padding: 6px 12px; font-size: 13px; border-radius: 8px; cursor: pointer; font-family: inherit; }
+  .btn-ghost:hover { background: rgba(255,255,255,.22); }
   footer { text-align:center; color:#888; padding: 18px; font-size: 12px; }
   .back-link { color:#fff; text-decoration: underline; opacity:.9; font-size: 13px; }
   .card { background:#fff; border-radius: 10px; padding: 18px; box-shadow:0 1px 0 rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.06); margin-bottom: 14px; }
   label { display:block; font-weight:600; font-size: 13px; margin: 12px 0 6px; color:#2b2b2b; }
   label:first-child { margin-top: 0; }
-  input[type=text], input[type=email], textarea, select { width:100%; padding: 10px 12px; border: 2px solid #d9d5cb; border-radius: 8px; font: inherit; background:#fff; }
-  input[type=text]:focus, input[type=email]:focus, textarea:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,85,191,.15); }
+  input[type=text], input[type=email], input[type=password], textarea, select { width:100%; padding: 10px 12px; border: 2px solid #d9d5cb; border-radius: 8px; font: inherit; font-size: 16px; background:#fff; }
+  input[type=text]:focus, input[type=email]:focus, input[type=password]:focus, textarea:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,85,191,.15); }
   textarea { resize: vertical; min-height: 60px; }
   .attendee-row { display:grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
-  .attendee-row select { width: auto; padding: 8px 10px; }
-  .attendee-row .remove-btn { background:#fff; border:1px solid #d9d5cb; color: var(--red); padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
-  .add-attendee { background:#fff; border: 2px dashed var(--blue); color: var(--blue); padding: 10px; border-radius: 8px; width: 100%; cursor: pointer; font-weight: 600; margin-top: 4px; }
+  .attendee-row select { width: auto; padding: 8px 10px; font-size: 14px; }
+  .attendee-row .remove-btn { background:#fff; border:1px solid #d9d5cb; color: var(--red); padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit; }
+  .add-attendee { background:#fff; border: 2px dashed var(--blue); color: var(--blue); padding: 10px; border-radius: 8px; width: 100%; cursor: pointer; font-weight: 600; margin-top: 4px; font-family: inherit; font-size: 14px; }
   .actions { display:flex; gap: 10px; align-items: center; margin-top: 16px; }
   .flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
   .flash-success { background:#e6f4eb; color: var(--green); border: 1px solid #c8e2d1; }
   .flash-error { background:#fbeceb; color: var(--red); border: 1px solid #f3c7c3; }
+  .login-wrap { max-width: 420px; margin: 0 auto; padding: 24px 16px; }
+  .login-title { display: block; font-weight: 700; font-family: 'Fredoka', system-ui, sans-serif; font-size: 22px; color: var(--blue); margin: 4px 0 12px; }
+  .login-sub { color:#555; font-size: 14px; margin-bottom: 16px; }
   @media (max-width: 640px) {
     th, td { font-size: 13px; padding: 8px; }
     .stat .n { font-size: 18px; }
+    header { padding: 14px 16px; }
+    header h1 { font-size: 17px; }
   }
 </style>
 `;
 
-function listPage({ rows, totals, keyParam, flash }) {
-  const k = encodeURIComponent(keyParam);
+function loginPage({ error }) {
+  const errHtml = error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin sign-in · Brickday</title>
+${STYLES}
+</head>
+<body>
+<header>
+  <div class="head-left">
+    <h1>Brickday Admin</h1>
+    <div class="sub">Sign in to view RSVPs</div>
+  </div>
+</header>
+<main>
+  <div class="login-wrap">
+    ${errHtml}
+    <form method="post" action="/admin" class="card" autocomplete="off">
+      <span class="login-title">Enter admin password</span>
+      <div class="login-sub">Match the <code>ADMIN_PASSWORD</code> you set in Vercel.</div>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autofocus required autocomplete="current-password" />
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Sign in</button>
+      </div>
+    </form>
+  </div>
+</main>
+</body>
+</html>`;
+}
+
+function listPage({ rows, totals, flash }) {
   const flashHtml = flash
     ? `<div class="flash flash-${flash.type}">${escapeHtml(flash.message)}</div>`
     : '';
@@ -145,8 +250,8 @@ function listPage({ rows, totals, keyParam, flash }) {
           <td>${escapeHtml(r.message_to_teddy) || '<span class="muted">—</span>'}</td>
           <td>
             <div class="row-actions">
-              <a class="btn btn-edit" href="/api/admin?key=${k}&action=edit&id=${r.id}">Edit</a>
-              <form method="post" action="/api/admin?key=${k}&action=delete&id=${r.id}" style="display:inline" onsubmit="return confirm('Delete this RSVP? This cannot be undone.');">
+              <a class="btn btn-edit" href="/admin?action=edit&id=${r.id}">Edit</a>
+              <form method="post" action="/admin?action=delete&id=${r.id}" style="display:inline" onsubmit="return confirm('Delete this RSVP? This cannot be undone.');">
                 <button class="btn btn-delete" type="submit">Delete</button>
               </form>
             </div>
@@ -165,8 +270,13 @@ ${STYLES}
 </head>
 <body>
 <header>
-  <h1>Teddy's Brickday RSVPs</h1>
-  <div class="sub">${rows.length} response${rows.length === 1 ? '' : 's'} · times in Eastern</div>
+  <div class="head-left">
+    <h1>Teddy's Brickday RSVPs</h1>
+    <div class="sub">${rows.length} response${rows.length === 1 ? '' : 's'} · times in Eastern</div>
+  </div>
+  <form method="post" action="/admin?action=logout" style="margin:0">
+    <button type="submit" class="btn-ghost">Log out</button>
+  </form>
 </header>
 <main>
   ${flashHtml}
@@ -191,13 +301,12 @@ ${STYLES}
     <tbody>${rowsHtml}</tbody>
   </table>
 </main>
-<footer>Bookmark this URL — refresh to see the latest.</footer>
+<footer>Bookmark /admin — refresh to see the latest.</footer>
 </body>
 </html>`;
 }
 
-function editPage({ row, keyParam, error }) {
-  const k = encodeURIComponent(keyParam);
+function editPage({ row, error }) {
   const attendeesJson = JSON.stringify(Array.isArray(row.attendees) ? row.attendees : []);
   const errHtml = error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : '';
 
@@ -211,12 +320,17 @@ ${STYLES}
 </head>
 <body>
 <header>
-  <h1>Edit RSVP</h1>
-  <div class="sub"><a class="back-link" href="/api/admin?key=${k}">← Back to all RSVPs</a></div>
+  <div class="head-left">
+    <h1>Edit RSVP</h1>
+    <div class="sub"><a class="back-link" href="/admin">← Back to all RSVPs</a></div>
+  </div>
+  <form method="post" action="/admin?action=logout" style="margin:0">
+    <button type="submit" class="btn-ghost">Log out</button>
+  </form>
 </header>
 <main>
   ${errHtml}
-  <form method="post" action="/api/admin?key=${k}&action=update&id=${row.id}" id="editForm">
+  <form method="post" action="/admin?action=update&id=${row.id}" id="editForm">
     <div class="card">
       <label for="parent_name">Parent / guardian name</label>
       <input type="text" id="parent_name" name="parent_name" value="${escapeAttr(row.parent_name)}" required />
@@ -250,8 +364,8 @@ ${STYLES}
     </div>
 
     <div class="actions">
-      <button type="submit" class="btn btn-primary">Save changes</button>
-      <a class="btn btn-link" href="/api/admin?key=${k}">Cancel</a>
+      <button type="submit" class="btn btn-primary" style="width:auto;padding:10px 16px;font-size:14px;">Save changes</button>
+      <a class="btn btn-link" href="/admin">Cancel</a>
     </div>
   </form>
 </main>
@@ -328,18 +442,6 @@ ${STYLES}
 </html>`;
 }
 
-function unauthorized(res) {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
-  res.status(401).send(
-    `<!doctype html><meta charset="utf-8"><title>Unauthorized</title>
-     <body style="font-family:system-ui;padding:40px;max-width:480px;margin:auto;">
-       <h1 style="color:#C91A09;margin:0 0 8px;">Unauthorized</h1>
-       <p>Append <code>?key=YOUR_PASSWORD</code> to the URL.</p>
-     </body>`
-  );
-}
-
 function htmlError(res, status, title, detail) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -348,6 +450,7 @@ function htmlError(res, status, title, detail) {
      <body style="font-family:system-ui;padding:40px;max-width:480px;margin:auto;">
        <h1 style="color:#C91A09;margin:0 0 8px;">${escapeHtml(title)}</h1>
        <p>${escapeHtml(detail || '')}</p>
+       <p><a href="/admin">← Back to admin</a></p>
      </body>`
   );
 }
@@ -395,7 +498,6 @@ async function loadOne(sql, id) {
 function parseBody(req) {
   if (!req.body) return {};
   if (typeof req.body === 'string') {
-    // Likely urlencoded; parse manually.
     const params = new URLSearchParams(req.body);
     const out = {};
     for (const [k, v] of params.entries()) out[k] = v;
@@ -431,6 +533,12 @@ function parseFlash(flashQuery) {
   return { type, message };
 }
 
+function renderLogin(res, status, error) {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(status).send(loginPage({ error }));
+}
+
 export default async function handler(req, res) {
   const expected = process.env.ADMIN_PASSWORD;
   if (!expected) {
@@ -443,11 +551,36 @@ export default async function handler(req, res) {
   }
 
   const q = req.query || {};
-  const provided = q.key || '';
-  if (provided !== expected) return unauthorized(res);
-
   const action = q.action || '';
-  const id = q.id ? Number.parseInt(q.id, 10) : null;
+  const authed = isAuthenticated(req, expected);
+
+  // --- LOGOUT ---
+  if (action === 'logout') {
+    clearAuthCookie(res);
+    return redirect(res, '/admin');
+  }
+
+  // --- LOGIN (POST /admin with no action, not yet authed) ---
+  if (!authed && req.method === 'POST' && !action) {
+    const body = parseBody(req);
+    const provided = (body && body.password) || '';
+    if (safePasswordMatch(provided, expected)) {
+      setAuthCookie(res, expected);
+      return redirect(res, '/admin');
+    }
+    return renderLogin(res, 401, 'Wrong password. Try again.');
+  }
+
+  // --- NOT AUTHED: show login page ---
+  if (!authed) {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.setHeader('Allow', 'GET, POST');
+      return htmlError(res, 405, 'Method not allowed');
+    }
+    return renderLogin(res, 200, null);
+  }
+
+  // --- AUTHED BELOW ---
 
   let sql;
   try {
@@ -456,12 +589,13 @@ export default async function handler(req, res) {
     return htmlError(res, 500, 'Database not configured', err.message);
   }
 
-  // --- DELETE ---
+  const id = q.id ? Number.parseInt(q.id, 10) : null;
+
   if (req.method === 'POST' && action === 'delete') {
     if (!id || Number.isNaN(id)) return htmlError(res, 400, 'Bad request', 'Missing id.');
     try {
       await sql`DELETE FROM rsvps WHERE id = ${id}`;
-      return redirect(res, `/api/admin?key=${encodeURIComponent(provided)}`, {
+      return redirect(res, '/admin', {
         type: 'success',
         message: 'RSVP deleted.',
       });
@@ -471,7 +605,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- UPDATE ---
   if (req.method === 'POST' && action === 'update') {
     if (!id || Number.isNaN(id)) return htmlError(res, 400, 'Bad request', 'Missing id.');
     const body = parseBody(req);
@@ -484,7 +617,7 @@ export default async function handler(req, res) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       return res.status(400).send(
-        editPage({ row: merged, keyParam: provided, error: 'Parent name is required.' })
+        editPage({ row: merged, error: 'Parent name is required.' })
       );
     }
 
@@ -527,7 +660,7 @@ export default async function handler(req, res) {
           message_to_teddy = ${messageToTeddy}
         WHERE id = ${id}
       `;
-      return redirect(res, `/api/admin?key=${encodeURIComponent(provided)}`, {
+      return redirect(res, '/admin', {
         type: 'success',
         message: 'RSVP updated.',
       });
@@ -537,7 +670,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- EDIT FORM ---
   if (req.method === 'GET' && action === 'edit') {
     if (!id || Number.isNaN(id)) return htmlError(res, 400, 'Bad request', 'Missing id.');
     try {
@@ -545,7 +677,7 @@ export default async function handler(req, res) {
       if (!row) return htmlError(res, 404, 'RSVP not found');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).send(editPage({ row, keyParam: provided, error: null }));
+      return res.status(200).send(editPage({ row, error: null }));
     } catch (err) {
       console.error('Load edit failed:', err);
       return htmlError(res, 500, 'Error loading RSVP', err.message);
@@ -564,9 +696,7 @@ export default async function handler(req, res) {
     const flash = parseFlash(q.flash);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    return res
-      .status(200)
-      .send(listPage({ rows, totals, keyParam: provided, flash }));
+    return res.status(200).send(listPage({ rows, totals, flash }));
   } catch (err) {
     console.error('Admin query failed:', err);
     return htmlError(res, 500, 'Error loading RSVPs', err.message);

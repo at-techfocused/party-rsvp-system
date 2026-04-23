@@ -40,7 +40,7 @@ That's the entire backend setup. No service accounts, no API keys to copy, no sp
 
 ### 5. View RSVPs
 
-Open `https://YOUR-URL.vercel.app/api/admin?key=YOUR_PASSWORD` in any browser and bookmark it. You'll see a sortable table with totals (yes / no / total people / total jumpers) plus every response, newest first. Refresh to see the latest.
+Open `https://YOUR-URL.vercel.app/admin` in any browser. You'll get a password prompt — enter the `ADMIN_PASSWORD` you set, and the dashboard remembers you on that device for 30 days via an HttpOnly cookie. Bookmark `/admin`; you'll see totals (yes / no / total people / total jumpers), every response (newest first), and per-row Edit / Delete buttons. A **Log out** button lives in the header when you want to clear the session.
 
 ### 6. Generate the QR code
 
@@ -75,7 +75,7 @@ npm run dev
 ```
 api/
   rsvp.js                 POST endpoint; validates + inserts into Postgres
-  admin.js                GET endpoint; password-gated HTML table of all RSVPs
+  admin.js                /admin dashboard (login form, list, edit, delete, logout)
 src/
   App.jsx                 screen router
   main.jsx
@@ -92,7 +92,7 @@ src/
     RSVPForm.jsx
     Declined.jsx
     ThankYou.jsx
-vercel.json               SPA rewrites
+vercel.json               SPA rewrite + /admin → /api/admin
 ```
 
 ## Database schema
