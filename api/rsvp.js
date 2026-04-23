@@ -56,9 +56,9 @@ function validate(body) {
   const contact = asString(body.contact);
 
   if (!parentName) return 'Parent name is required.';
-  if (!contact) return 'Phone or email is required.';
 
   if (attending) {
+    if (!contact) return 'Phone or email is required.';
     const childName = asString(body.childName);
     if (!childName) return "Child's name is required.";
     if (!Array.isArray(body.attendees) || body.attendees.length === 0) {

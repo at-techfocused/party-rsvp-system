@@ -17,15 +17,11 @@ export default function Declined({ onBack, onSuccess, done }) {
       setError('Please enter your name so Teddy knows who said hi.');
       return;
     }
-    if (!contact.trim()) {
-      setError('Please enter a phone number or email.');
-      return;
-    }
 
     const payload = {
       attending: false,
       parentName: parentName.trim(),
-      contact: contact.trim(),
+      contact: contact.trim() || null,
       childName: null,
       attendees: [],
       notes: null,
@@ -97,11 +93,10 @@ export default function Declined({ onBack, onSuccess, done }) {
             name="parentName"
           />
           <Input
-            label="Phone or email"
+            label="Phone or email (optional)"
             value={contact}
             onChange={setContact}
             placeholder="617-555-0142 or you@example.com"
-            required
             autoComplete="email"
             inputMode="email"
             name="contact"
