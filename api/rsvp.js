@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless';
+import crypto from 'node:crypto';
 
 let _sql;
 function getSql() {
@@ -15,6 +16,9 @@ function getSql() {
   _sql = neon(conn);
   return _sql;
 }
+
+const COOKIE_NAME = 'brickday_rsvp';
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
 
 let schemaReady = false;
 
@@ -36,7 +40,52 @@ async function ensureSchema() {
       message_to_teddy TEXT
     )
   `;
+  await sql`ALTER TABLE rsvps ADD COLUMN IF NOT EXISTS edit_token TEXT`;
+  await sql`ALTER TABLE rsvps ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `;
   schemaReady = true;
+}
+
+function parseCookies(header) {
+  if (!header) return {};
+  const out = {};
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function readEditToken(req) {
+  const cookies = parseCookies(req.headers && req.headers.cookie);
+  return cookies[COOKIE_NAME] || null;
+}
+
+function setEditCookie(res, token) {
+  res.setHeader(
+    'Set-Cookie',
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`
+  );
+}
+
+function clearEditCookie(res) {
+  res.setHeader(
+    'Set-Cookie',
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+  );
 }
 
 function bad(res, status, message) {
@@ -73,9 +122,136 @@ function validate(body) {
   return null;
 }
 
+function toClientRsvp(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    attending: !!row.attending,
+    parentName: row.parent_name || '',
+    contact: row.contact || '',
+    childName: row.child_name || '',
+    attendees: Array.isArray(row.attendees) ? row.attendees : [],
+    notes: row.notes || '',
+    messageToTeddy: row.message_to_teddy || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function loadByToken(sql, token) {
+  if (!token) return null;
+  const rows = await sql`
+    SELECT id, created_at, updated_at, attending, parent_name, contact,
+           child_name, attendees, notes, message_to_teddy
+    FROM rsvps WHERE edit_token = ${token} LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+async function getNotificationEmail(sql) {
+  try {
+    const rows = await sql`SELECT value FROM app_settings WHERE key = 'notification_email' LIMIT 1`;
+    const v = rows[0] && rows[0].value;
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendNotification({ email, rsvp, mode }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !email) return;
+
+  const attending = rsvp.attending ? 'Yes' : 'No';
+  const attendeesList = Array.isArray(rsvp.attendees) && rsvp.attendees.length
+    ? rsvp.attendees
+        .map((a) => `${a.name}${a.isJumper ? ' (jumper)' : ' (non-jumper)'}`)
+        .join(', ')
+    : '—';
+
+  const subject = mode === 'updated'
+    ? `Updated RSVP — ${rsvp.parentName} (${attending})`
+    : `New RSVP — ${rsvp.parentName} (${attending})`;
+
+  const text = [
+    `Parent: ${rsvp.parentName}`,
+    `Contact: ${rsvp.contact || '—'}`,
+    `Attending: ${attending}`,
+    `Child: ${rsvp.childName || '—'}`,
+    `Attendees: ${attendeesList}`,
+    `Notes: ${rsvp.notes || '—'}`,
+    `Message to Teddy: ${rsvp.messageToTeddy || '—'}`,
+  ].join('\n');
+
+  const esc = (s) =>
+    String(s == null ? '' : s)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px">
+      <h2 style="color:#0055BF;margin:0 0 8px">${esc(subject)}</h2>
+      <table cellpadding="6" style="border-collapse:collapse;font-size:14px">
+        <tr><td><b>Parent</b></td><td>${esc(rsvp.parentName)}</td></tr>
+        <tr><td><b>Contact</b></td><td>${esc(rsvp.contact) || '—'}</td></tr>
+        <tr><td><b>Attending</b></td><td>${attending}</td></tr>
+        <tr><td><b>Child</b></td><td>${esc(rsvp.childName) || '—'}</td></tr>
+        <tr><td><b>Attendees</b></td><td>${esc(attendeesList)}</td></tr>
+        <tr><td><b>Notes</b></td><td>${esc(rsvp.notes) || '—'}</td></tr>
+        <tr><td><b>Message</b></td><td>${esc(rsvp.messageToTeddy) || '—'}</td></tr>
+      </table>
+    </div>
+  `;
+
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Brickday RSVP <onboarding@resend.dev>',
+        to: [email],
+        subject,
+        text,
+        html,
+      }),
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      console.error('Resend non-OK:', r.status, errText);
+    }
+  } catch (err) {
+    console.error('Resend request failed:', err);
+  }
+}
+
 export default async function handler(req, res) {
+  if (req.method === 'GET') {
+    // Return the caller's existing RSVP (by cookie) if any.
+    try {
+      await ensureSchema();
+      const sql = getSql();
+      const token = readEditToken(req);
+      if (!token) {
+        return res.status(200).json({ rsvp: null });
+      }
+      const row = await loadByToken(sql, token);
+      if (!row) {
+        clearEditCookie(res);
+        return res.status(200).json({ rsvp: null });
+      }
+      return res.status(200).json({ rsvp: toClientRsvp(row) });
+    } catch (err) {
+      console.error('RSVP lookup failed:', err);
+      return res.status(200).json({ rsvp: null });
+    }
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+    res.setHeader('Allow', 'GET, POST');
     return bad(res, 405, 'Method not allowed.');
   }
 
@@ -111,18 +287,65 @@ export default async function handler(req, res) {
   try {
     await ensureSchema();
     const sql = getSql();
-    await sql`
-      INSERT INTO rsvps
-        (attending, parent_name, contact, child_name, attendees,
-         total_people, total_jumpers, notes, message_to_teddy)
-      VALUES
-        (${attending}, ${parentName}, ${contact}, ${childName},
-         ${attendeesJson}::jsonb, ${totalPeople}, ${totalJumpers},
-         ${notes}, ${messageToTeddy})
-    `;
-    return res.status(200).json({ success: true });
+
+    // Upsert based on edit token cookie.
+    const existingToken = readEditToken(req);
+    const existingRow = await loadByToken(sql, existingToken);
+
+    let mode;
+    let savedRow;
+
+    if (existingRow) {
+      const rows = await sql`
+        UPDATE rsvps SET
+          attending = ${attending},
+          parent_name = ${parentName},
+          contact = ${contact},
+          child_name = ${childName},
+          attendees = ${attendeesJson}::jsonb,
+          total_people = ${totalPeople},
+          total_jumpers = ${totalJumpers},
+          notes = ${notes},
+          message_to_teddy = ${messageToTeddy},
+          updated_at = NOW()
+        WHERE id = ${existingRow.id}
+        RETURNING id, created_at, updated_at, attending, parent_name, contact,
+                  child_name, attendees, notes, message_to_teddy
+      `;
+      savedRow = rows[0];
+      mode = 'updated';
+      // Refresh cookie lifetime.
+      setEditCookie(res, existingToken);
+    } else {
+      const newToken = crypto.randomBytes(24).toString('hex');
+      const rows = await sql`
+        INSERT INTO rsvps
+          (attending, parent_name, contact, child_name, attendees,
+           total_people, total_jumpers, notes, message_to_teddy, edit_token)
+        VALUES
+          (${attending}, ${parentName}, ${contact}, ${childName},
+           ${attendeesJson}::jsonb, ${totalPeople}, ${totalJumpers},
+           ${notes}, ${messageToTeddy}, ${newToken})
+        RETURNING id, created_at, updated_at, attending, parent_name, contact,
+                  child_name, attendees, notes, message_to_teddy
+      `;
+      savedRow = rows[0];
+      mode = 'created';
+      setEditCookie(res, newToken);
+    }
+
+    const clientRsvp = toClientRsvp(savedRow);
+
+    // Fire-and-forget notification. Don't block the response on Resend latency.
+    getNotificationEmail(sql)
+      .then((email) => {
+        if (email) return sendNotification({ email, rsvp: clientRsvp, mode });
+      })
+      .catch((err) => console.error('notify resolve failed:', err));
+
+    return res.status(200).json({ success: true, mode, rsvp: clientRsvp });
   } catch (err) {
-    console.error('RSVP insert failed:', err);
+    console.error('RSVP write failed:', err);
     return bad(res, 500, 'Could not save RSVP. Please try again or text the host.');
   }
 }

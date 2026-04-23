@@ -3,12 +3,18 @@ import BrickHeader from '../components/BrickHeader.jsx';
 import BrickButton from '../components/BrickButton.jsx';
 import Input from '../components/Input.jsx';
 
-export default function Declined({ onBack, onSuccess, done }) {
-  const [parentName, setParentName] = useState('');
-  const [contact, setContact] = useState('');
-  const [message, setMessage] = useState('');
+export default function Declined({ onBack, onSuccess, done, initialData }) {
+  const initial = initialData && !initialData.attending ? initialData : null;
+  const [parentName, setParentName] = useState(
+    initial ? initial.parentName || '' : ''
+  );
+  const [contact, setContact] = useState(initial ? initial.contact || '' : '');
+  const [message, setMessage] = useState(
+    initial ? initial.messageToTeddy || '' : ''
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const isEditing = !!initial;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -39,7 +45,7 @@ export default function Declined({ onBack, onSuccess, done }) {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Something went wrong. Please try again.');
       }
-      onSuccess();
+      onSuccess(data.rsvp || null);
     } catch (err) {
       setError(err.message || 'Network error. Please try again.');
     } finally {
@@ -74,7 +80,9 @@ export default function Declined({ onBack, onSuccess, done }) {
           >
             ← Back
           </button>
-          <h2 className="display text-xl text-lego-blue">We'll miss you!</h2>
+          <h2 className="display text-xl text-lego-blue">
+            {isEditing ? 'Edit your RSVP' : "We'll miss you!"}
+          </h2>
           <span className="w-12" aria-hidden="true" />
         </div>
 
@@ -126,6 +134,8 @@ export default function Declined({ onBack, onSuccess, done }) {
               <span className="spinner" aria-hidden="true" />
               Sending…
             </>
+          ) : isEditing ? (
+            <>Save changes</>
           ) : (
             <>Send</>
           )}

@@ -5,15 +5,28 @@ import Input from '../components/Input.jsx';
 import AttendeeRow from '../components/AttendeeRow.jsx';
 import JumperToggle from '../components/JumperToggle.jsx';
 
-export default function RSVPForm({ onBack, onSuccess }) {
-  const [parentName, setParentName] = useState('');
-  const [contact, setContact] = useState('');
-  const [childName, setChildName] = useState('');
-  const [childIsJumper, setChildIsJumper] = useState(true);
-  const [extras, setExtras] = useState([]);
-  const [notes, setNotes] = useState('');
+export default function RSVPForm({ onBack, onSuccess, initialData }) {
+  const initial = initialData && initialData.attending ? initialData : null;
+  const firstAttendee = initial && initial.attendees && initial.attendees[0];
+  const restAttendees =
+    initial && Array.isArray(initial.attendees) ? initial.attendees.slice(1) : [];
+
+  const [parentName, setParentName] = useState(initial ? initial.parentName : '');
+  const [contact, setContact] = useState(initial ? initial.contact : '');
+  const [childName, setChildName] = useState(
+    initial ? (firstAttendee ? firstAttendee.name : initial.childName || '') : ''
+  );
+  const [childIsJumper, setChildIsJumper] = useState(
+    firstAttendee ? !!firstAttendee.isJumper : true
+  );
+  const [extras, setExtras] = useState(
+    restAttendees.map((a) => ({ name: a.name || '', isJumper: !!a.isJumper }))
+  );
+  const [notes, setNotes] = useState(initial ? initial.notes || '' : '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  const isEditing = !!initial;
 
   const addExtra = () => {
     setExtras((rows) => [...rows, { name: '', isJumper: true }]);
@@ -78,7 +91,7 @@ export default function RSVPForm({ onBack, onSuccess }) {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Something went wrong. Please try again.');
       }
-      onSuccess(payload);
+      onSuccess(payload, data.rsvp || null);
     } catch (err) {
       setError(err.message || 'Network error. Please try again.');
     } finally {
@@ -99,7 +112,9 @@ export default function RSVPForm({ onBack, onSuccess }) {
           >
             ← Back
           </button>
-          <h2 className="display text-xl text-lego-blue">You're coming! 🎉</h2>
+          <h2 className="display text-xl text-lego-blue">
+            {isEditing ? 'Edit your RSVP' : "You're coming! 🎉"}
+          </h2>
           <span className="w-12" aria-hidden="true" />
         </div>
 
@@ -194,6 +209,8 @@ export default function RSVPForm({ onBack, onSuccess }) {
               <span className="spinner" aria-hidden="true" />
               Sending…
             </>
+          ) : isEditing ? (
+            <>Save changes →</>
           ) : (
             <>Send RSVP →</>
           )}

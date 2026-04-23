@@ -224,10 +224,17 @@ ${STYLES}
 </html>`;
 }
 
-function listPage({ rows, totals, flash }) {
+function listPage({ rows, totals, flash, settings, resendConfigured }) {
   const flashHtml = flash
     ? `<div class="flash flash-${flash.type}">${escapeHtml(flash.message)}</div>`
     : '';
+
+  const notifEmail = (settings && settings.notification_email) || '';
+  const notifStatus = !resendConfigured
+    ? '<span class="muted small">⚠️ Set the <code>RESEND_API_KEY</code> env var in Vercel to enable email alerts.</span>'
+    : notifEmail
+      ? `<span class="muted small">Alerts go to <b>${escapeHtml(notifEmail)}</b> when a parent submits or updates an RSVP.</span>`
+      : '<span class="muted small">No alerts yet. Enter an email above to start receiving them.</span>';
 
   const rowsHtml = rows.length === 0
     ? `<tr><td colspan="7" class="empty">No RSVPs yet.</td></tr>`
@@ -280,6 +287,18 @@ ${STYLES}
 </header>
 <main>
   ${flashHtml}
+
+  <div class="card" style="margin-bottom:14px">
+    <form method="post" action="/admin?action=save-settings" style="margin:0">
+      <label for="notification_email" style="margin-top:0">Email me when an RSVP is submitted</label>
+      <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap">
+        <input type="email" id="notification_email" name="notification_email" value="${escapeAttr(notifEmail)}" placeholder="you@example.com" style="flex:1 1 220px;min-width:180px" />
+        <button type="submit" class="btn btn-edit" style="padding:10px 14px;font-size:14px">Save</button>
+      </div>
+      <div style="margin-top:6px">${notifStatus}</div>
+    </form>
+  </div>
+
   <div class="totals">
     <div class="stat"><div class="n">${totals.yes}</div><div class="l">Saying yes</div></div>
     <div class="stat"><div class="n">${totals.no}</div><div class="l">Saying no</div></div>
@@ -470,6 +489,40 @@ async function loadAllRows(sql) {
   }
 }
 
+async function ensureSettingsTable(sql) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `;
+}
+
+async function loadSettings(sql) {
+  try {
+    const rows = await sql`SELECT key, value FROM app_settings`;
+    const out = {};
+    for (const r of rows) out[r.key] = r.value;
+    return out;
+  } catch (err) {
+    if (err && /relation .* does not exist/i.test(err.message || '')) return {};
+    throw err;
+  }
+}
+
+async function saveSetting(sql, key, value) {
+  await ensureSettingsTable(sql);
+  if (value == null || value === '') {
+    await sql`DELETE FROM app_settings WHERE key = ${key}`;
+  } else {
+    await sql`
+      INSERT INTO app_settings (key, value)
+      VALUES (${key}, ${value})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `;
+  }
+}
+
 function computeTotals(rows) {
   return rows.reduce(
     (acc, r) => {
@@ -591,6 +644,29 @@ export default async function handler(req, res) {
 
   const id = q.id ? Number.parseInt(q.id, 10) : null;
 
+  if (req.method === 'POST' && action === 'save-settings') {
+    const body = parseBody(req);
+    const rawEmail = asStringOrNull(body.notification_email);
+    if (rawEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      return redirect(res, '/admin', {
+        type: 'error',
+        message: 'Enter a valid email address.',
+      });
+    }
+    try {
+      await saveSetting(sql, 'notification_email', rawEmail);
+      return redirect(res, '/admin', {
+        type: 'success',
+        message: rawEmail
+          ? 'Notification email saved.'
+          : 'Notification email cleared.',
+      });
+    } catch (err) {
+      console.error('Save settings failed:', err);
+      return htmlError(res, 500, 'Save failed', err.message);
+    }
+  }
+
   if (req.method === 'POST' && action === 'delete') {
     if (!id || Number.isNaN(id)) return htmlError(res, 400, 'Bad request', 'Missing id.');
     try {
@@ -691,12 +767,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    const rows = await loadAllRows(sql);
+    const [rows, settings] = await Promise.all([
+      loadAllRows(sql),
+      loadSettings(sql),
+    ]);
     const totals = computeTotals(rows);
     const flash = parseFlash(q.flash);
+    const resendConfigured = !!process.env.RESEND_API_KEY;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).send(listPage({ rows, totals, flash }));
+    return res
+      .status(200)
+      .send(listPage({ rows, totals, flash, settings, resendConfigured }));
   } catch (err) {
     console.error('Admin query failed:', err);
     return htmlError(res, 500, 'Error loading RSVPs', err.message);

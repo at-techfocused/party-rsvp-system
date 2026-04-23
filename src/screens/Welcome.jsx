@@ -2,12 +2,39 @@ import BrickHeader from '../components/BrickHeader.jsx';
 import BrickButton from '../components/BrickButton.jsx';
 import { PARTY } from '../partyDetails.js';
 
-export default function Welcome({ onYes, onNo }) {
+export default function Welcome({ onYes, onNo, existingRsvp, onEdit }) {
   return (
     <div className="min-h-screen flex flex-col">
       <BrickHeader color="#0055BF" studColor="#003D8A" />
 
       <main className="flex-1 px-5 pt-6 pb-10 space-y-5">
+        {existingRsvp && (
+          <div className="rounded-xl border-2 border-lego-blue bg-white p-4">
+            <div className="flex items-start gap-2">
+              <span className="text-xl leading-none" aria-hidden="true">✓</span>
+              <div className="flex-1 text-sm">
+                <div className="font-semibold text-gray-900">
+                  You've already RSVP'd as{' '}
+                  <span className={existingRsvp.attending ? 'text-lego-green' : 'text-gray-700'}>
+                    {existingRsvp.attending ? 'attending' : 'not attending'}
+                  </span>
+                  .
+                </div>
+                <div className="text-gray-600">
+                  Changed your mind? Tap Edit, or pick a different answer below to overwrite.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onEdit}
+              className="tappable mt-3 w-full py-2 px-3 rounded-lg border-2 border-lego-blue text-lego-blue font-semibold"
+            >
+              Edit my RSVP
+            </button>
+          </div>
+        )}
+
         <header className="text-center">
           <p className="text-sm font-semibold uppercase tracking-widest text-lego-blue mb-2">
             You're invited!
@@ -33,6 +60,14 @@ export default function Welcome({ onYes, onNo }) {
               <>
                 <div className="font-semibold">{PARTY.locationName}</div>
                 <div className="text-sm text-gray-600">{PARTY.locationAddress}</div>
+                <a
+                  href={PARTY.locationMapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block mt-1 text-sm font-semibold text-lego-blue underline"
+                >
+                  Get directions →
+                </a>
               </>
             }
           />

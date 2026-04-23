@@ -42,7 +42,18 @@ That's the entire backend setup. No service accounts, no API keys to copy, no sp
 
 Open `https://YOUR-URL.vercel.app/admin` in any browser. You'll get a password prompt — enter the `ADMIN_PASSWORD` you set, and the dashboard remembers you on that device for 30 days via an HttpOnly cookie. Bookmark `/admin`; you'll see totals (yes / no / total people / total jumpers), every response (newest first), and per-row Edit / Delete buttons. A **Log out** button lives in the header when you want to clear the session.
 
-### 6. Generate the QR code
+### 6. (Optional) Email alerts when someone RSVPs
+
+If you want to be emailed on every new or updated RSVP:
+
+1. Sign up at [resend.com](https://resend.com) (free tier). Sign up with the email you want the alerts to land in — the shared `onboarding@resend.dev` sender can only deliver to the account owner until you verify your own domain.
+2. Create an API key in the Resend dashboard.
+3. In Vercel: **Settings → Environment Variables** → add `RESEND_API_KEY` with the value from step 2. Redeploy (any new deploy picks it up).
+4. Back in the app at `/admin`, there's a **"Email me when an RSVP is submitted"** card at the top. Enter your email and click Save. Done — you'll now get an email whenever a parent submits or updates their RSVP.
+
+You can change or clear the recipient at any time from the same card.
+
+### 7. Generate the QR code
 
 Point a QR code at the production URL:
 
@@ -103,6 +114,7 @@ Auto-created on first write:
 CREATE TABLE rsvps (
   id SERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ,
   attending BOOLEAN NOT NULL,
   parent_name TEXT NOT NULL,
   contact TEXT NOT NULL,
@@ -111,8 +123,16 @@ CREATE TABLE rsvps (
   total_people INT NOT NULL DEFAULT 0,
   total_jumpers INT NOT NULL DEFAULT 0,
   notes TEXT,
-  message_to_teddy TEXT
+  message_to_teddy TEXT,
+  edit_token TEXT                     -- opaque token stored in the parent's cookie
+);
+
+CREATE TABLE app_settings (            -- e.g. the host's notification email
+  key TEXT PRIMARY KEY,
+  value TEXT
 );
 ```
+
+Parents returning to the site (same device / browser) are matched to their existing row via the `edit_token` cookie and can edit their response — the API upserts rather than inserting duplicates.
 
 If you ever want the raw data, use Vercel's **Storage → your database → Data** tab to run any SQL you like (e.g., `SELECT * FROM rsvps WHERE attending = true ORDER BY created_at`).
