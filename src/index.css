@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --lego-blue: #0055bf;
+  --lego-blue-dark: #003d8a;
+  --lego-red: #c91a09;
+  --lego-red-dark: #8f1206;
+  --lego-yellow: #f7d117;
+  --lego-yellow-dark: #c2a20e;
+  --lego-green: #237841;
+  --lego-green-dark: #15502a;
+  --lego-bg: #f5f3ee;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--lego-bg);
+  color: #1a1a1a;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Inputs: 16px to prevent iOS zoom on focus */
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  font-size: 16px;
+}
+
+/* Brick button base — chunky solid shadow that collapses on press */
+.brick-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.2;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 80ms ease, box-shadow 80ms ease, filter 80ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.brick-btn:active:not(:disabled) {
+  transform: translateY(2px);
+}
+
+.brick-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.brick-btn--outline {
+  background: #fff;
+  color: var(--lego-blue);
+  border: 2px solid var(--lego-blue);
+  box-shadow: 0 4px 0 0 var(--lego-blue-dark);
+}
+.brick-btn--outline:active:not(:disabled) {
+  box-shadow: 0 2px 0 0 var(--lego-blue-dark);
+}
+
+.brick-btn--green {
+  background: var(--lego-green);
+  box-shadow: 0 4px 0 0 var(--lego-green-dark);
+}
+.brick-btn--green:active:not(:disabled) {
+  box-shadow: 0 2px 0 0 var(--lego-green-dark);
+}
+
+.brick-btn--red {
+  background: var(--lego-red);
+  box-shadow: 0 4px 0 0 var(--lego-red-dark);
+}
+.brick-btn--red:active:not(:disabled) {
+  box-shadow: 0 2px 0 0 var(--lego-red-dark);
+}
+
+.brick-btn--blue {
+  background: var(--lego-blue);
+  box-shadow: 0 4px 0 0 var(--lego-blue-dark);
+}
+.brick-btn--blue:active:not(:disabled) {
+  box-shadow: 0 2px 0 0 var(--lego-blue-dark);
+}
+
+.brick-btn--yellow {
+  background: var(--lego-yellow);
+  color: #1a1a1a;
+  box-shadow: 0 4px 0 0 var(--lego-yellow-dark);
+}
+.brick-btn--yellow:active:not(:disabled) {
+  box-shadow: 0 2px 0 0 var(--lego-yellow-dark);
+}
+
+/* Brick stud — circle with inset shadow */
+.brick-stud {
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  box-shadow:
+    inset 0 -3px 0 rgba(0, 0, 0, 0.22),
+    inset 0 2px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* Styled input */
+.brick-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 2px solid #d9d5cb;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a1a1a;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.brick-input:focus {
+  outline: none;
+  border-color: var(--lego-blue);
+  box-shadow: 0 0 0 3px rgba(0, 85, 191, 0.15);
+}
+
+.brick-input::placeholder {
+  color: #a19a8a;
+}
+
+.brick-label {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #2b2b2b;
+}
+
+/* Segmented toggle (Jumper / Non-jumper) */
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  padding: 4px;
+  background: #f0ede5;
+  border: 2px solid #d9d5cb;
+  border-radius: 10px;
+}
+
+.seg-btn {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: #4a4a4a;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.seg-btn[aria-pressed='true'] {
+  background: var(--lego-blue);
+  color: #fff;
+}
+
+/* Card */
+.card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.warn-card {
+  background: var(--lego-yellow);
+  color: #1a1a1a;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 4px 0 0 var(--lego-yellow-dark);
+}
+
+/* Display headings */
+.display {
+  font-family: 'Fredoka', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+/* Tap target helper */
+.tappable {
+  min-height: 48px;
+}
+
+/* Spinner */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 9999px;
+  animation: spin 700ms linear infinite;
+  display: inline-block;
+  vertical-align: -3px;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
