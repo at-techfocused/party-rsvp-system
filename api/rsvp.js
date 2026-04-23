@@ -1,22 +1,43 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
+import { neon } from '@neondatabase/serverless';
 
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+let _sql;
+function getSql() {
+  if (_sql) return _sql;
+  const conn =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.NEON_DATABASE_URL;
+  if (!conn) {
+    throw new Error(
+      'No database connection string set. Add a Neon database in Vercel → Storage.'
+    );
+  }
+  _sql = neon(conn);
+  return _sql;
+}
 
-const SHEET_HEADERS = [
-  'Timestamp',
-  'Attending',
-  'Parent Name',
-  'Contact',
-  'Child Name',
-  'Attendees',
-  'Jumpers',
-  'Non-Jumpers',
-  'Total People',
-  'Total Jumpers',
-  'Notes',
-  'Message to Teddy',
-];
+let schemaReady = false;
+
+async function ensureSchema() {
+  if (schemaReady) return;
+  const sql = getSql();
+  await sql`
+    CREATE TABLE IF NOT EXISTS rsvps (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      attending BOOLEAN NOT NULL,
+      parent_name TEXT NOT NULL,
+      contact TEXT NOT NULL,
+      child_name TEXT,
+      attendees JSONB NOT NULL DEFAULT '[]'::jsonb,
+      total_people INT NOT NULL DEFAULT 0,
+      total_jumpers INT NOT NULL DEFAULT 0,
+      notes TEXT,
+      message_to_teddy TEXT
+    )
+  `;
+  schemaReady = true;
+}
 
 function bad(res, status, message) {
   res.status(status).json({ error: message });
@@ -52,43 +73,6 @@ function validate(body) {
   return null;
 }
 
-async function getSheet() {
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const rawKey = process.env.GOOGLE_PRIVATE_KEY;
-
-  if (!sheetId || !email || !rawKey) {
-    throw new Error('Missing Google Sheets environment variables.');
-  }
-
-  const privateKey = rawKey.replace(/\\n/g, '\n');
-
-  const jwt = new JWT({
-    email,
-    key: privateKey,
-    scopes: SCOPES,
-  });
-
-  const doc = new GoogleSpreadsheet(sheetId, jwt);
-  await doc.loadInfo();
-  const sheet = doc.sheetsByIndex[0];
-  if (!sheet) throw new Error('No sheet found in spreadsheet.');
-
-  // Ensure header row exists and matches.
-  try {
-    await sheet.loadHeaderRow();
-    const current = sheet.headerValues || [];
-    const headersMissing = SHEET_HEADERS.some((h, i) => current[i] !== h);
-    if (headersMissing) {
-      await sheet.setHeaderRow(SHEET_HEADERS);
-    }
-  } catch {
-    await sheet.setHeaderRow(SHEET_HEADERS);
-  }
-
-  return sheet;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -108,33 +92,37 @@ export default async function handler(req, res) {
   if (validationError) return bad(res, 400, validationError);
 
   const attending = body.attending === true;
-  const attendees = Array.isArray(body.attendees) ? body.attendees : [];
+  const attendees = Array.isArray(body.attendees)
+    ? body.attendees.map((a) => ({
+        name: asString(a.name),
+        isJumper: !!a.isJumper,
+      }))
+    : [];
+  const totalPeople = attendees.length;
+  const totalJumpers = attendees.filter((a) => a.isJumper).length;
 
-  const jumpers = attendees.filter((a) => a.isJumper).map((a) => asString(a.name));
-  const nonJumpers = attendees.filter((a) => !a.isJumper).map((a) => asString(a.name));
-  const allNames = attendees.map((a) => asString(a.name));
-
-  const row = {
-    Timestamp: new Date().toISOString(),
-    Attending: attending ? 'Yes' : 'No',
-    'Parent Name': asString(body.parentName),
-    Contact: asString(body.contact),
-    'Child Name': asString(body.childName),
-    Attendees: allNames.join('; '),
-    Jumpers: jumpers.join('; '),
-    'Non-Jumpers': nonJumpers.join('; '),
-    'Total People': attendees.length,
-    'Total Jumpers': jumpers.length,
-    Notes: asString(body.notes),
-    'Message to Teddy': asString(body.messageToTeddy),
-  };
+  const parentName = asString(body.parentName);
+  const contact = asString(body.contact);
+  const childName = asString(body.childName) || null;
+  const notes = asString(body.notes) || null;
+  const messageToTeddy = asString(body.messageToTeddy) || null;
+  const attendeesJson = JSON.stringify(attendees);
 
   try {
-    const sheet = await getSheet();
-    await sheet.addRow(row);
+    await ensureSchema();
+    const sql = getSql();
+    await sql`
+      INSERT INTO rsvps
+        (attending, parent_name, contact, child_name, attendees,
+         total_people, total_jumpers, notes, message_to_teddy)
+      VALUES
+        (${attending}, ${parentName}, ${contact}, ${childName},
+         ${attendeesJson}::jsonb, ${totalPeople}, ${totalJumpers},
+         ${notes}, ${messageToTeddy})
+    `;
     return res.status(200).json({ success: true });
   } catch (err) {
-    console.error('RSVP append failed:', err);
+    console.error('RSVP insert failed:', err);
     return bad(res, 500, 'Could not save RSVP. Please try again or text the host.');
   }
 }

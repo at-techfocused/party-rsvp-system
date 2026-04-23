@@ -1,96 +1,81 @@
 # Teddy's Brickday Party RSVP
 
-Mobile-first RSVP app for Teddy's LEGO-themed 6th birthday party. Guests scan a QR code, land on the page, and RSVP in under 30 seconds. Responses append to a Google Sheet — no database, no admin UI.
+Mobile-first RSVP app for Teddy's LEGO-themed 6th birthday party. Guests scan a QR code, land on the page, and RSVP in under 30 seconds. Responses are stored in Vercel Postgres and viewable at a private admin URL.
 
 - **Frontend:** React + Vite + Tailwind CSS
-- **API:** Vercel serverless function (Node)
-- **Storage:** Google Sheets via a service account
+- **API:** Vercel serverless functions (Node)
+- **Storage:** Neon Postgres via the Vercel Marketplace integration — auto-provisioned, no GCP, no Sheets, no manual API keys
 
-## Run locally
+## Deploy (one-time, ~5 minutes, all in the Vercel dashboard)
 
-```bash
-npm install
-npm run dev
-```
+### 1. Import the repo
 
-The Vite dev server does not execute the `/api` serverless function. To test the full flow locally, install the Vercel CLI and run `vercel dev` after completing the Google Sheets setup below.
+1. Sign in to [vercel.com](https://vercel.com) with your GitHub account.
+2. **Add New → Project** → pick `party-rsvp-system` → **Import**.
+3. Vercel auto-detects Vite. Don't touch the build settings.
 
-```bash
-npm i -g vercel
-vercel dev
-```
+### 2. Add a Neon Postgres database
 
-## Deploy
+1. In the project dashboard: **Storage** tab → **Create Database** → **Neon (Postgres)**.
+2. Pick a region (e.g., `us-east-1` / Washington D.C.) → **Continue** → **Connect**.
+3. Vercel auto-injects the database connection string as `DATABASE_URL` (Neon's free tier is plenty for a party).
 
-### 1. Create the Google Sheet
+That's it for storage. The app creates its `rsvps` table on the first submission — no SQL to run yourself.
 
-1. In Google Drive, create a new Google Sheet called **Teddy Brickday RSVPs**.
-2. Paste this header row into row 1 (the API will also create it if missing, but doing it up front avoids a race on the first submit):
+### 3. Set the admin password
 
-```
-Timestamp	Attending	Parent Name	Contact	Child Name	Attendees	Jumpers	Non-Jumpers	Total People	Total Jumpers	Notes	Message to Teddy
-```
+In **Settings → Environment Variables**, add:
 
-3. Copy the Sheet ID from the URL:
-   `https://docs.google.com/spreadsheets/d/`**`<THIS_IS_THE_ID>`**`/edit`
+| Key              | Value                              |
+| ---------------- | ---------------------------------- |
+| `ADMIN_PASSWORD` | any string you'll remember         |
 
-### 2. Create a Google Cloud service account
+Apply it to **Production** (and **Preview** if you want previews to share data).
 
-1. Open [console.cloud.google.com](https://console.cloud.google.com/) and create (or select) a project.
-2. Enable the **Google Sheets API**: APIs & Services → Library → search "Google Sheets API" → Enable.
-3. APIs & Services → Credentials → **Create credentials** → **Service account**.
-4. Give it a name (e.g., `brickday-rsvp`). No roles are required at the project level.
-5. Open the new service account → **Keys** → **Add key** → **Create new key** → **JSON**. A JSON file downloads — keep it safe, it is the only copy.
+### 4. Deploy
 
-From that JSON file you need:
-- `client_email` → `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `private_key`  → `GOOGLE_PRIVATE_KEY` (keep the literal `\n` escapes — the server un-escapes them at runtime)
+Click **Deploy** in the Vercel dashboard (or just push to the production branch — every push auto-deploys). You'll get a URL like `teddy-brickday.vercel.app`.
 
-### 3. Share the Sheet with the service account
+That's the entire backend setup. No service accounts, no API keys to copy, no spreadsheet to create or share.
 
-Open the Sheet → **Share** → paste the service account's `client_email` → give it **Editor** access → Send. Without this step the API returns a 500.
+### 5. View RSVPs
 
-### 4. Set env vars in Vercel
-
-In the Vercel project dashboard, go to **Settings → Environment Variables** and add all three for **Production** (and **Preview** if you want previews to write too):
-
-| Key                              | Value                                                           |
-| -------------------------------- | --------------------------------------------------------------- |
-| `GOOGLE_SHEET_ID`                | The Sheet ID from step 1                                        |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL`   | `client_email` from the JSON key                                |
-| `GOOGLE_PRIVATE_KEY`             | `private_key` from the JSON key, newlines kept as literal `\n`  |
-
-When pasting `GOOGLE_PRIVATE_KEY` into Vercel, include the full value starting with `-----BEGIN PRIVATE KEY-----\n` and ending with `\n-----END PRIVATE KEY-----\n`. Don't wrap it in quotes in the Vercel UI.
-
-### 5. Deploy
-
-```bash
-npm i -g vercel
-vercel            # first run: link / create the project
-vercel --prod     # promote to production
-```
-
-Vercel auto-detects Vite (static build output in `dist/`) and picks up `api/rsvp.js` as a Node serverless function.
+Open `https://YOUR-URL.vercel.app/api/admin?key=YOUR_PASSWORD` in any browser and bookmark it. You'll see a sortable table with totals (yes / no / total people / total jumpers) plus every response, newest first. Refresh to see the latest.
 
 ### 6. Generate the QR code
 
-Point a QR code at the production URL (e.g., `https://teddy-brickday.vercel.app`):
+Point a QR code at the production URL:
 
 ```bash
 npx qrcode "https://teddy-brickday.vercel.app" -o teddy-rsvp.png
 ```
 
-Or paste the URL into [qr-code-generator.com](https://www.qr-code-generator.com/) and download the PNG. Print it at ~2 inches or larger for reliable scans.
+Or paste the URL into [qr-code-generator.com](https://www.qr-code-generator.com/) and download the PNG. Print at ~2 inches or larger for reliable scans.
 
-## Viewing RSVPs
+## Run locally (optional)
 
-Open the Google Sheet. Each submission is one row. Nobody needs an account or a login — sharing the Sheet with yourself (the host) is enough.
+The Vite dev server can render the UI but won't execute the `/api` serverless functions. To test the full flow, use the Vercel CLI:
+
+```bash
+npm install
+npm i -g vercel
+vercel link            # connects this folder to your Vercel project
+vercel env pull        # downloads DATABASE_URL + ADMIN_PASSWORD to .env.development.local
+vercel dev             # runs both the Vite frontend and the API functions
+```
+
+For UI-only iteration (no API):
+
+```bash
+npm run dev
+```
 
 ## Project layout
 
 ```
 api/
-  rsvp.js                 POST endpoint; validates + appends to the Sheet
+  rsvp.js                 POST endpoint; validates + inserts into Postgres
+  admin.js                GET endpoint; password-gated HTML table of all RSVPs
 src/
   App.jsx                 screen router
   main.jsx
@@ -109,3 +94,25 @@ src/
     ThankYou.jsx
 vercel.json               SPA rewrites
 ```
+
+## Database schema
+
+Auto-created on first write:
+
+```sql
+CREATE TABLE rsvps (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  attending BOOLEAN NOT NULL,
+  parent_name TEXT NOT NULL,
+  contact TEXT NOT NULL,
+  child_name TEXT,
+  attendees JSONB NOT NULL DEFAULT '[]'::jsonb,
+  total_people INT NOT NULL DEFAULT 0,
+  total_jumpers INT NOT NULL DEFAULT 0,
+  notes TEXT,
+  message_to_teddy TEXT
+);
+```
+
+If you ever want the raw data, use Vercel's **Storage → your database → Data** tab to run any SQL you like (e.g., `SELECT * FROM rsvps WHERE attending = true ORDER BY created_at`).
