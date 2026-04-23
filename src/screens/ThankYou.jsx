@@ -1,6 +1,8 @@
 import BrickHeader from '../components/BrickHeader.jsx';
 import BrickButton from '../components/BrickButton.jsx';
-import { PARTY } from '../partyDetails.js';
+import { PARTY, buildCalendarDataUrl } from '../partyDetails.js';
+
+const calendarUrl = buildCalendarDataUrl();
 
 export default function ThankYou({ data }) {
   const attendees = data?.attendees || [];
@@ -88,8 +90,27 @@ export default function ThankYou({ data }) {
         <section className="card text-sm text-gray-700 space-y-1">
           <div className="font-semibold text-gray-900">See you there!</div>
           <div>{PARTY.dateLabel}</div>
-          <div>{PARTY.locationName}</div>
+          <div>
+            <a
+              href={calendarUrl}
+              download="teddy-brickday.ics"
+              className="text-sm font-semibold text-lego-blue underline"
+            >
+              Add to calendar →
+            </a>
+          </div>
+          <div className="pt-1">{PARTY.locationName}</div>
           <div>{PARTY.locationAddress}</div>
+          <div>
+            <a
+              href={PARTY.locationMapUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-semibold text-lego-blue underline"
+            >
+              Get directions →
+            </a>
+          </div>
         </section>
       </main>
     </div>
