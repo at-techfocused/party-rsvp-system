@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless';
+import { waitUntil } from '@vercel/functions';
+import { z } from 'zod';
 import crypto from 'node:crypto';
 
 let _sql;
@@ -77,14 +79,14 @@ function readEditToken(req) {
 function setEditCookie(res, token) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}`
   );
 }
 
 function clearEditCookie(res) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
   );
 }
 
@@ -92,35 +94,66 @@ function bad(res, status, message) {
   res.status(status).json({ error: message });
 }
 
-function asString(v) {
-  if (v == null) return '';
-  return String(v).trim();
+// --- Validation -------------------------------------------------------------
+
+// Allow nullable free-text fields that may arrive as string, null, or omitted.
+// `coerce` is intentionally not used — we want the shape enforced, not guessed.
+const nullableText = (max) =>
+  z
+    .union([z.string().max(max), z.null()])
+    .optional()
+    .transform((v) => (v == null || v === '' ? null : v));
+
+const AttendeeSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    isJumper: z.boolean(),
+  })
+  .strict();
+
+const RsvpSchema = z
+  .object({
+    attending: z.boolean(),
+    parentName: z.string().trim().min(1, 'Parent name is required.').max(200),
+    contact: nullableText(200),
+    childName: nullableText(200),
+    attendees: z.array(AttendeeSchema).max(20).optional().default([]),
+    notes: nullableText(2000),
+    messageToTeddy: nullableText(2000),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.attending) {
+      if (!data.contact || !data.contact.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Phone or email is required.',
+          path: ['contact'],
+        });
+      }
+      if (!data.childName || !data.childName.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Child's name is required.",
+          path: ['childName'],
+        });
+      }
+      if (!data.attendees || data.attendees.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'At least one attendee is required.',
+          path: ['attendees'],
+        });
+      }
+    }
+  });
+
+function firstIssueMessage(error) {
+  const issue = error && error.issues && error.issues[0];
+  return (issue && issue.message) || 'Invalid request.';
 }
 
-function validate(body) {
-  if (!body || typeof body !== 'object') return 'Invalid request body.';
-
-  const attending = body.attending === true;
-  const parentName = asString(body.parentName);
-  const contact = asString(body.contact);
-
-  if (!parentName) return 'Parent name is required.';
-
-  if (attending) {
-    if (!contact) return 'Phone or email is required.';
-    const childName = asString(body.childName);
-    if (!childName) return "Child's name is required.";
-    if (!Array.isArray(body.attendees) || body.attendees.length === 0) {
-      return 'At least one attendee is required.';
-    }
-    for (const a of body.attendees) {
-      if (!a || typeof a !== 'object') return 'Invalid attendee entry.';
-      if (!asString(a.name)) return 'Each attendee needs a name.';
-    }
-  }
-
-  return null;
-}
+// --- Helpers ----------------------------------------------------------------
 
 function toClientRsvp(row) {
   if (!row) return null;
@@ -158,20 +191,25 @@ async function getNotificationEmail(sql) {
   }
 }
 
-async function sendNotification({ email, rsvp, mode }) {
+async function notifyHost(sql, rsvp, mode) {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey || !email) return;
+  if (!apiKey) return;
+
+  const email = await getNotificationEmail(sql);
+  if (!email) return;
 
   const attending = rsvp.attending ? 'Yes' : 'No';
-  const attendeesList = Array.isArray(rsvp.attendees) && rsvp.attendees.length
-    ? rsvp.attendees
-        .map((a) => `${a.name}${a.isJumper ? ' (jumper)' : ' (non-jumper)'}`)
-        .join(', ')
-    : '—';
+  const attendeesList =
+    Array.isArray(rsvp.attendees) && rsvp.attendees.length
+      ? rsvp.attendees
+          .map((a) => `${a.name}${a.isJumper ? ' (jumper)' : ' (non-jumper)'}`)
+          .join(', ')
+      : '—';
 
-  const subject = mode === 'updated'
-    ? `Updated RSVP — ${rsvp.parentName} (${attending})`
-    : `New RSVP — ${rsvp.parentName} (${attending})`;
+  const subject =
+    mode === 'updated'
+      ? `Updated RSVP — ${rsvp.parentName} (${attending})`
+      : `New RSVP — ${rsvp.parentName} (${attending})`;
 
   const text = [
     `Parent: ${rsvp.parentName}`,
@@ -228,16 +266,15 @@ async function sendNotification({ email, rsvp, mode }) {
   }
 }
 
+// --- Handler ----------------------------------------------------------------
+
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    // Return the caller's existing RSVP (by cookie) if any.
     try {
       await ensureSchema();
       const sql = getSql();
       const token = readEditToken(req);
-      if (!token) {
-        return res.status(200).json({ rsvp: null });
-      }
+      if (!token) return res.status(200).json({ rsvp: null });
       const row = await loadByToken(sql, token);
       if (!row) {
         clearEditCookie(res);
@@ -264,31 +301,31 @@ export default async function handler(req, res) {
     }
   }
 
-  const validationError = validate(body);
-  if (validationError) return bad(res, 400, validationError);
+  const parsed = RsvpSchema.safeParse(body);
+  if (!parsed.success) {
+    return bad(res, 400, firstIssueMessage(parsed.error));
+  }
+  const input = parsed.data;
 
-  const attending = body.attending === true;
-  const attendees = Array.isArray(body.attendees)
-    ? body.attendees.map((a) => ({
-        name: asString(a.name),
-        isJumper: !!a.isJumper,
-      }))
-    : [];
+  const attending = input.attending;
+  const attendees = (input.attendees || []).map((a) => ({
+    name: a.name.trim(),
+    isJumper: a.isJumper,
+  }));
   const totalPeople = attendees.length;
   const totalJumpers = attendees.filter((a) => a.isJumper).length;
 
-  const parentName = asString(body.parentName);
-  const contact = asString(body.contact);
-  const childName = asString(body.childName) || null;
-  const notes = asString(body.notes) || null;
-  const messageToTeddy = asString(body.messageToTeddy) || null;
+  const parentName = input.parentName.trim();
+  const contact = input.contact ? input.contact.trim() : '';
+  const childName = input.childName ? input.childName.trim() : null;
+  const notes = input.notes ? input.notes.trim() : null;
+  const messageToTeddy = input.messageToTeddy ? input.messageToTeddy.trim() : null;
   const attendeesJson = JSON.stringify(attendees);
 
   try {
     await ensureSchema();
     const sql = getSql();
 
-    // Upsert based on edit token cookie.
     const existingToken = readEditToken(req);
     const existingRow = await loadByToken(sql, existingToken);
 
@@ -314,7 +351,6 @@ export default async function handler(req, res) {
       `;
       savedRow = rows[0];
       mode = 'updated';
-      // Refresh cookie lifetime.
       setEditCookie(res, existingToken);
     } else {
       const newToken = crypto.randomBytes(24).toString('hex');
@@ -336,12 +372,12 @@ export default async function handler(req, res) {
 
     const clientRsvp = toClientRsvp(savedRow);
 
-    // Fire-and-forget notification. Don't block the response on Resend latency.
-    getNotificationEmail(sql)
-      .then((email) => {
-        if (email) return sendNotification({ email, rsvp: clientRsvp, mode });
-      })
-      .catch((err) => console.error('notify resolve failed:', err));
+    // Keep the Resend call alive past the response return without blocking it.
+    waitUntil(
+      notifyHost(sql, clientRsvp, mode).catch((err) =>
+        console.error('notify failed:', err)
+      )
+    );
 
     return res.status(200).json({ success: true, mode, rsvp: clientRsvp });
   } catch (err) {

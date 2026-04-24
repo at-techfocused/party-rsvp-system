@@ -1,8 +1,6 @@
 import BrickHeader from '../components/BrickHeader.jsx';
 import BrickButton from '../components/BrickButton.jsx';
-import { PARTY, buildCalendarDataUrl } from '../partyDetails.js';
-
-const calendarUrl = buildCalendarDataUrl();
+import { PARTY } from '../partyDetails.js';
 
 export default function ThankYou({ data }) {
   const attendees = data?.attendees || [];
@@ -92,8 +90,7 @@ export default function ThankYou({ data }) {
           <div>{PARTY.dateLabel}</div>
           <div>
             <a
-              href={calendarUrl}
-              download="teddy-brickday.ics"
+              href={PARTY.calendarUrl}
               className="text-sm font-semibold text-lego-blue underline"
             >
               Add to calendar →

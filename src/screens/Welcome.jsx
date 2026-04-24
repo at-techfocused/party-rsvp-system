@@ -1,8 +1,6 @@
 import BrickHeader from '../components/BrickHeader.jsx';
 import BrickButton from '../components/BrickButton.jsx';
-import { PARTY, buildCalendarDataUrl } from '../partyDetails.js';
-
-const calendarUrl = buildCalendarDataUrl();
+import { PARTY } from '../partyDetails.js';
 
 export default function Welcome({ onYes, onNo, existingRsvp, onEdit }) {
   return (
@@ -61,8 +59,7 @@ export default function Welcome({ onYes, onNo, existingRsvp, onEdit }) {
               <>
                 <div>{PARTY.dateLabel}</div>
                 <a
-                  href={calendarUrl}
-                  download="teddy-brickday.ics"
+                  href={PARTY.calendarUrl}
                   className="inline-block mt-1 text-sm font-semibold text-lego-blue underline"
                 >
                   Add to calendar →

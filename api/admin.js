@@ -72,14 +72,14 @@ function setAuthCookie(res, password) {
   const token = computeToken(password);
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}`
   );
 }
 
 function clearAuthCookie(res) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
   );
 }
 
